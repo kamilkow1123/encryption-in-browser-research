@@ -8,12 +8,17 @@ A collection of examples and research on how to encrypt data in the browser, usi
 
 ## Getting started
 
-```shell
-# Install dependencies
-bun install # or npm, yarn, pnpm
+1. Install dependencies:
 
-# Run dev server
-bun dev
+   ```shell
+   bun install # or npm, yarn, pnpm
+   ```
 
-# Edit files in `examples/`
-```
+2. Run dev server:
+
+   ```shell
+   bun dev
+   ```
+
+3. Go to: [http://localhost:5173](http://localhost:5173)
+4. Edit files in `examples/`, e.g. `examples/web-crypto-api.ts`
