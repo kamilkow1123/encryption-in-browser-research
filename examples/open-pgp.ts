@@ -4,6 +4,7 @@ import {
     decryptKey,
     encrypt,
     generateKey,
+    generateSessionKey,
     readKey,
     readMessage,
     readPrivateKey,
@@ -14,7 +15,7 @@ import {
 type UserData = { name: string; email: string };
 
 // GENERATE ASYMMETRIC KEYS
-const generatePublicPrivateKeyPair = async (
+export const generatePublicPrivateKeyPair = async (
     userData: UserData[],
     passphrase?: string
 ) => {
@@ -28,8 +29,55 @@ const generatePublicPrivateKeyPair = async (
     return { privateKey, publicKey, revocationCertificate };
 };
 
+// GENERATE SYMMETRIC KEY
+export const generateSymmetricKey = async () => {
+    return "super long and hard to guess password";
+    // return generateSessionKey({ encryptionKeys: [] });
+};
+
+// ENCRYPT SYMMETRIC KEY
+export const encryptSymmetricKey = async ({
+    symmetricKey,
+    armoredPublicKey,
+}: {
+    symmetricKey: string;
+    armoredPublicKey: string;
+}) => {
+    const publicKey = await readKey({ armoredKey: armoredPublicKey });
+    const encryptedSK = await encrypt({
+        message: await createMessage({ text: symmetricKey }),
+        encryptionKeys: publicKey,
+    });
+
+    return encryptedSK as string;
+};
+
+// DECRYPT SYMMETRIC KEY
+export const decryptSymmetricKey = async ({
+    armoredEncryptedSymmetricKey,
+    armoredPrivateKey,
+    passphrase,
+}: {
+    armoredEncryptedSymmetricKey: string;
+    armoredPrivateKey: string;
+    passphrase: string;
+}) => {
+    const privateKey = await decryptPrivateKey(armoredPrivateKey, passphrase);
+
+    const encryptedSymmetricKey = await readMessage({
+        armoredMessage: armoredEncryptedSymmetricKey,
+    });
+
+    const { data } = await decrypt({
+        message: encryptedSymmetricKey,
+        decryptionKeys: privateKey,
+    });
+
+    return data as string;
+};
+
 // DECRYPT PRIVATE KEY
-const decryptPrivateKey = async (
+export const decryptPrivateKey = async (
     armoredPrivateKey: string,
     passphrase?: string
 ) => {
@@ -42,7 +90,7 @@ const decryptPrivateKey = async (
 };
 
 // SIGN MESSAGE
-const createAndSignMessage = async ({
+export const createAndSignMessage = async ({
     text,
     armoredPrivateKeyForSigning,
     passphrase,
@@ -67,7 +115,7 @@ const createAndSignMessage = async ({
 };
 
 // VERIFY SIGNATURE
-const verifyMessageSignature = async ({
+export const verifyMessageSignature = async ({
     armoredMessage,
     armoredPublicKeyForVerifying,
 }: {
@@ -82,13 +130,14 @@ const verifyMessageSignature = async ({
         armoredMessage: armoredMessage,
     });
 
-    const { signatures } = await verify({
-        message,
-        verificationKeys: publicKey,
-    });
-
-    const { verified } = signatures[0];
     try {
+        const { signatures } = await verify({
+            message,
+            verificationKeys: publicKey,
+            expectSigned: true,
+        });
+
+        const { verified } = signatures[0];
         await verified; // throws on invalid signature
     } catch (e) {
         const error = e as Error;
@@ -97,42 +146,39 @@ const verifyMessageSignature = async ({
 };
 
 // ENCRYPT
-const encryptAndSign = async ({
+export const encryptAndSign = async ({
     text,
-    armoredSymmetricKeyForEncrypting,
+    symmetricKey,
     armoredPrivateKeyForSigning,
     passphrase,
 }: {
     text: string;
-    armoredSymmetricKeyForEncrypting: string;
+    symmetricKey: string;
     armoredPrivateKeyForSigning?: string;
     passphrase?: string;
 }) => {
-    const symmetricKey = await readKey({
-        armoredKey: armoredSymmetricKeyForEncrypting,
-    });
     const privateKey = armoredPrivateKeyForSigning
         ? await decryptPrivateKey(armoredPrivateKeyForSigning, passphrase)
         : undefined;
 
     const armoredEncryptedMessage = await encrypt({
         message: await createMessage({ text }),
-        encryptionKeys: symmetricKey,
-        signingKeys: privateKey, // optional
+        passwords: symmetricKey,
+        signingKeys: privateKey,
     });
 
     return armoredEncryptedMessage as string;
 };
 
 // DECRYPT
-const decryptAndVerifySignature = async ({
+export const decryptAndVerifySignature = async ({
     armoredMessage,
     armoredPublicKeyForVerifying,
-    armoredSymmetricKeyForDecrypting,
+    symmetricKey,
 }: {
     armoredMessage: string;
     armoredPublicKeyForVerifying?: string;
-    armoredSymmetricKeyForDecrypting: string;
+    symmetricKey: string;
 }) => {
     const message = await readMessage({ armoredMessage });
     const publicKey = armoredPublicKeyForVerifying
@@ -141,20 +187,15 @@ const decryptAndVerifySignature = async ({
           })
         : undefined;
 
-    const privateKey = await decryptPrivateKey(
-        armoredSymmetricKeyForDecrypting,
-        passphrase
-    );
-
-    const { data, signatures } = await decrypt({
-        message,
-        verificationKeys: publicKey,
-        decryptionKeys: privateKey,
-        expectSigned: true,
-    });
-
-    const { verified } = signatures[0];
     try {
+        const { data, signatures = [] } = await decrypt({
+            message,
+            verificationKeys: publicKey,
+            passwords: symmetricKey,
+            expectSigned: !!publicKey,
+        });
+
+        const { verified } = signatures[0] ?? {};
         await verified; // throws on invalid signature
         return data as string;
     } catch (e) {
@@ -163,63 +204,112 @@ const decryptAndVerifySignature = async ({
     }
 };
 
-/*********************/
-/********DEMO*********/
-/*********************/
+/****************************************************/
+/*************************DEMO***********************/
+/****************************************************/
 
-// SIGN AND VERIFY MESSAGE
-const signAndVerifyMessage = async (
-    message: string,
-    armoredPublicKey: string,
-    armoredPrivateKey: string,
-    passphrase?: string
-) => {
-    const signedMessage = await createAndSignMessage({
-        text: message,
-        armoredPrivateKeyForSigning: armoredPrivateKey,
-        passphrase,
-    });
+/*********************************************/
+/*[LEADER]: GENERATES PRIVATE-PUBLIC KEY PAIR*/
+/*********************************************/
 
-    await verifyMessageSignature({
-        armoredMessage: signedMessage,
-        armoredPublicKeyForVerifying: armoredPublicKey,
-    });
-};
+const leaderPassphrase = "super long and hard to guess secret";
+const { privateKey: leaderPrivateKey, publicKey: leaderPublicKey } =
+    await generatePublicPrivateKeyPair(
+        [{ name: "John Smith", email: "john@example.com" }],
+        leaderPassphrase
+    );
 
-// ENCRYPT AND DECRYPT STRING DATA
-const encryptAndDecryptMessage = async (
-    text: string,
-    armoredPublicKey: string,
-    armoredPrivateKey: string,
-    passphrase?: string
-) => {
-    const armoredEncryptedMessage = await encryptAndSign({
-        text,
-        armoredSymmetricKeyForEncrypting: armoredPublicKey,
-        armoredPrivateKeyForSigning: armoredPrivateKey,
-        passphrase,
-    });
-    console.log("🚀 ~ armoredEncryptedMessage:", armoredEncryptedMessage);
+/*****************************/
+/*[LEADER]: STORES PUBLIC KEY*/
+/*****************************/
 
-    const decryptedMessage = await decryptAndVerifySignature({
-        armoredMessage: armoredEncryptedMessage,
-        armoredPublicKeyForVerifying: armoredPublicKey,
-        armoredSymmetricKeyForDecrypting: armoredPrivateKey,
-    });
-    console.log("🚀 ~ decryptedMessage:", decryptedMessage);
-};
+/*********************************/
+/*[USER]: GENERATES SYMMETRIC KEY*/
+/*********************************/
 
-const passphrase = "super long and hard to guess secret";
-const { privateKey, publicKey } = await generatePublicPrivateKeyPair(
-    [{ name: "John Smith", email: "john@example.com" }],
-    passphrase
-);
+const symmetricKey = await generateSymmetricKey();
+console.log("Symmetric Key:", symmetricKey);
 
-await signAndVerifyMessage("Hello", publicKey, privateKey, passphrase);
+/**********************************/
+/*[USER]: ENCRYPTS MESSAGE WITH SK*/
+/**********************************/
 
-await encryptAndDecryptMessage(
-    "Hello world",
-    publicKey,
-    privateKey,
-    passphrase
-);
+const message = "Hello World";
+const encryptedMessage = await encryptAndSign({
+    text: message,
+    symmetricKey,
+});
+console.log("Original message:", message);
+
+/**********************************************/
+/*[USER]: ENCRYPTS SK WITH LEADER'S PUBLIC KEY*/
+/**********************************************/
+
+const encryptedSK = await encryptSymmetricKey({
+    symmetricKey,
+    armoredPublicKey: leaderPublicKey,
+});
+
+/**************************************************/
+/*[USER]: SENDS ENCRYPTED MESSAGE AND ENCRYPTED SK*/
+/**************************************************/
+
+console.log("Encrypted message:", encryptedMessage);
+console.log("Encrypted Symmetric Key:", encryptedSK);
+
+/****************************************/
+/*[LEADER]: DECRYPTS SK WITH PRIVATE KEY*/
+/****************************************/
+
+const decryptedSK = await decryptSymmetricKey({
+    armoredEncryptedSymmetricKey: encryptedSK,
+    armoredPrivateKey: leaderPrivateKey,
+    passphrase: leaderPassphrase,
+});
+console.log("Decrypted Symmetric Key:", decryptedSK);
+
+/************************************/
+/*[LEADER]: DECRYPTS MESSAGE WITH SK*/
+/************************************/
+
+const decryptedMessage = await decryptAndVerifySignature({
+    armoredMessage: encryptedMessage,
+    symmetricKey: decryptedSK,
+});
+console.log("Decrypted message:", decryptedMessage);
+
+/**********************************/
+/*[LEADER]: ENCRYPTS REPLY WITH SK*/
+/**********************************/
+
+const replyMessage = "Hello Anonymous";
+const encryptedReplyMessage = await encryptAndSign({
+    text: replyMessage,
+    symmetricKey: decryptedSK,
+    armoredPrivateKeyForSigning: leaderPrivateKey,
+    passphrase: leaderPassphrase,
+});
+console.log("Original reply message:", replyMessage);
+
+/*********************************/
+/*[LEADER]: SENDS ENCRYPTED REPLY*/
+/*********************************/
+
+console.log("Encrypted reply message:", encryptedReplyMessage);
+
+/********************************/
+/*[USER]: DECRYPTS REPLY WITH SK*/
+/********************************/
+
+// const { publicKey: newPublicKey } = await generatePublicPrivateKeyPair(
+//     [{ name: "John Paul II", email: "john@example.com" }],
+//     leaderPassphrase
+// );
+
+const decryptedReplyMessage = await decryptAndVerifySignature({
+    armoredMessage: encryptedReplyMessage,
+    symmetricKey,
+    armoredPublicKeyForVerifying: leaderPublicKey,
+    // armoredPublicKeyForVerifying: newPublicKey,
+});
+console.log("Decrypted reply message:", decryptedReplyMessage);
