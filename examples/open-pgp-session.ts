@@ -1,9 +1,13 @@
 import {
+    SessionKey,
     createMessage,
     decrypt,
     decryptKey,
+    decryptSessionKeys,
     encrypt,
+    encryptSessionKey,
     generateKey,
+    generateSessionKey,
     readKey,
     readMessage,
     readPrivateKey,
@@ -30,8 +34,7 @@ export const generatePublicPrivateKeyPair = async (
 
 // GENERATE SYMMETRIC KEY
 export const generateSymmetricKey = async () => {
-    return "super long and hard to guess password";
-    // return generateSessionKey({ encryptionKeys: [] });
+    return generateSessionKey({ encryptionKeys: [] });
 };
 
 // ENCRYPT SYMMETRIC KEY
@@ -39,13 +42,17 @@ export const encryptSymmetricKey = async ({
     symmetricKey,
     armoredPublicKey,
 }: {
-    symmetricKey: string;
+    symmetricKey: SessionKey;
     armoredPublicKey: string;
 }) => {
     const publicKey = await readKey({ armoredKey: armoredPublicKey });
-    const encryptedSK = await encrypt({
-        message: await createMessage({ text: symmetricKey }),
+
+    const { data, algorithm } = symmetricKey;
+    const encryptedSK = await encryptSessionKey({
+        data,
+        algorithm,
         encryptionKeys: publicKey,
+        format: "armored",
     });
 
     return encryptedSK as string;
@@ -67,12 +74,12 @@ export const decryptSymmetricKey = async ({
         armoredMessage: armoredEncryptedSymmetricKey,
     });
 
-    const { data } = await decrypt({
+    const [decryptedSymmetricKey] = await decryptSessionKeys({
         message: encryptedSymmetricKey,
         decryptionKeys: privateKey,
     });
 
-    return data as string;
+    return decryptedSymmetricKey;
 };
 
 // DECRYPT PRIVATE KEY
@@ -152,7 +159,7 @@ export const encryptAndSign = async ({
     passphrase,
 }: {
     text: string;
-    symmetricKey: string;
+    symmetricKey: SessionKey;
     armoredPrivateKeyForSigning?: string;
     passphrase?: string;
 }) => {
@@ -162,7 +169,7 @@ export const encryptAndSign = async ({
 
     const armoredEncryptedMessage = await encrypt({
         message: await createMessage({ text }),
-        passwords: symmetricKey,
+        sessionKey: symmetricKey,
         signingKeys: privateKey,
     });
 
@@ -177,7 +184,7 @@ export const decryptAndVerifySignature = async ({
 }: {
     armoredMessage: string;
     armoredPublicKeyForVerifying?: string;
-    symmetricKey: string;
+    symmetricKey: SessionKey;
 }) => {
     const message = await readMessage({ armoredMessage });
     const publicKey = armoredPublicKeyForVerifying
@@ -190,7 +197,7 @@ export const decryptAndVerifySignature = async ({
         const { data, signatures = [] } = await decrypt({
             message,
             verificationKeys: publicKey,
-            passwords: symmetricKey,
+            sessionKeys: symmetricKey,
             expectSigned: !!publicKey,
         });
 
@@ -233,7 +240,7 @@ console.log("Symmetric Key:", symmetricKey);
 /*[USER]: ENCRYPTS MESSAGE WITH SK*/
 /**********************************/
 
-const message = "Hello World";
+const message = "Hello World Session Key";
 const encryptedMessage = await encryptAndSign({
     text: message,
     symmetricKey,
@@ -281,7 +288,7 @@ console.log("Decrypted message:", decryptedMessage);
 /*[LEADER]: ENCRYPTS REPLY WITH SK*/
 /**********************************/
 
-const replyMessage = "Hello Anonymous";
+const replyMessage = "Hello Anonymous Session Key";
 const encryptedReplyMessage = await encryptAndSign({
     text: replyMessage,
     symmetricKey: decryptedSK,
